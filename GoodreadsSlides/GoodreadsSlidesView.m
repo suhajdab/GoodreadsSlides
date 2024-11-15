@@ -18,6 +18,8 @@
 @property (strong) NSImage *wallImage;        // Off-screen image for the wall
 @property (assign) CGFloat wallImageWidth;    // Width of the wall image
 @property (assign) CGFloat wallAnimationOffset; // Current offset for animation
+@property (assign) NSTimeInterval shelfInfoStartTime;      // Start time for shelf info display
+@property (assign) NSTimeInterval shelfInfoMinimumDuration; // Minimum duration to display shelf info
 @end
 
 @implementation GoodreadsSlidesView
@@ -33,6 +35,8 @@
         
         // Initialize shelf info display
         _displayShelfInfo = YES;
+        _shelfInfoMinimumDuration = 3.0; // Display shelf info for at least 3 seconds
+        _shelfInfoStartTime = 0.0;
         _inChannel = NO;
         _inItem = NO;
         
@@ -46,6 +50,7 @@
 {
     [super startAnimation];
     self.displayShelfInfo = YES;
+    self.shelfInfoStartTime = [NSDate timeIntervalSinceReferenceDate];
 }
 
 - (void)stopAnimation
@@ -79,10 +84,6 @@
         return;
     }
     
-    if (self.books.count == 0) {
-        return; // No books to display
-    }
-    
     if (!self.wallImage) {
         return; // Wall image is not ready
     }
@@ -112,7 +113,14 @@
 
 - (void)animateOneFrame
 {
-    if (!self.displayShelfInfo && self.wallImage) {
+    NSTimeInterval currentTime = [NSDate timeIntervalSinceReferenceDate];
+    
+    if (self.displayShelfInfo) {
+        if (self.wallImage && (currentTime - self.shelfInfoStartTime) >= self.shelfInfoMinimumDuration) {
+            // Shelf info has been displayed for the minimum duration and images are ready
+            self.displayShelfInfo = NO;
+        }
+    } else if (self.wallImage) {
         // Move the wall to the left for a scrolling effect
         self.wallAnimationOffset += 1.0; // Adjust speed as needed
         
@@ -159,7 +167,9 @@
         // Build the wall image
         [self buildWallImage];
         
-        self.displayShelfInfo = NO; // Hide shelf info after loading
+        // Do not set displayShelfInfo to NO here
+        // Let animateOneFrame handle the transition after minimum duration
+        
         [self setNeedsDisplay:YES];
     });
 }
