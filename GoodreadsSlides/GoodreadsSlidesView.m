@@ -20,6 +20,8 @@
 @property (assign) CGFloat wallAnimationOffset; // Current offset for animation
 @property (assign) NSTimeInterval shelfInfoStartTime;      // Start time for shelf info display
 @property (assign) NSTimeInterval shelfInfoMinimumDuration; // Minimum duration to display shelf info
+@property (assign) NSUInteger currentRSSPage; // Index of currently loading rss page
+@property (assign) BOOL isFetching; // Indicates if fetching is in progress
 @end
 
 @implementation GoodreadsSlidesView
@@ -40,8 +42,12 @@
         _inChannel = NO;
         _inItem = NO;
         
+        // Initialize pagination properties
+        _currentRSSPage = 1;
+        _isFetching = NO;
+        
         self.animationTimeInterval = 1/30.0; // 30 FPS for smooth animation
-        [self fetchRSSFeed];
+        [self fetchRSSFeed]; // Start fetching from the first page
     }
     return self;
 }
@@ -133,6 +139,70 @@
     [self setNeedsDisplay:YES];
 }
 
+- (void)fetchRSSFeed
+{
+    if (self.isFetching) {
+        return; // Avoid multiple concurrent fetches
+    }
+    
+    self.isFetching = YES;
+    
+    if (self.currentRSSPage == 1) {
+        [self.books removeAllObjects]; // Clear old data if starting from page 1
+        self.preloadedImages = [NSMutableArray array]; // Initialize the preloaded images array
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.currentBookIndex = 0; // Reset index
+            [self setNeedsDisplay:YES]; // Force re-rendering
+        });
+    }
+    
+    // Construct the URL with the current page parameter
+    NSString *urlString = [NSString stringWithFormat:@"%@&page=%lu", self.feedUrl, (unsigned long)self.currentRSSPage];
+    NSURL *url = [NSURL URLWithString:urlString];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [request setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"]; // Avoid cached responses
+    
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        self.isFetching = NO;
+        
+        if (data) {
+            // Parse the RSS feed
+            NSXMLParser *parser = [[NSXMLParser alloc] initWithData:data];
+            parser.delegate = self;
+            BOOL parseSuccess = [parser parse];
+            
+            if (parseSuccess) {
+                NSUInteger itemsFetched = self.books.count - self.numberOfBooks;
+                self.numberOfBooks = self.books.count;
+                
+                if (itemsFetched == 100) {
+                    // There may be more pages; increment the page number and fetch again
+                    self.currentRSSPage += 1;
+                    [self fetchRSSFeed];
+                } else {
+                    // Fetched less than 100 items; this was the last page
+                    // Preload images after all pages are fetched
+                    [self preloadImages];
+                }
+            } else {
+                NSLog(@"Error parsing RSS feed");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    self.displayShelfInfo = NO; // Hide shelf info even if there's an error
+                    [self setNeedsDisplay:YES];
+                });
+            }
+        }
+        if (error) {
+            NSLog(@"Error fetching RSS feed: %@", error.localizedDescription);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.displayShelfInfo = NO; // Hide shelf info even if there's an error
+                [self setNeedsDisplay:YES];
+            });
+        }
+    }];
+    [task resume];
+}
+
 - (void)preloadImages
 {
     dispatch_group_t group = dispatch_group_create();
@@ -162,14 +232,8 @@
     
     // After all images are loaded
     dispatch_group_notify(group, dispatch_get_main_queue(), ^{
-        self.numberOfBooks = self.books.count;
-        
         // Build the wall image
         [self buildWallImage];
-        
-        // Do not set displayShelfInfo to NO here
-        // Let animateOneFrame handle the transition after minimum duration
-        
         [self setNeedsDisplay:YES];
     });
 }
@@ -241,39 +305,16 @@
     self.wallAnimationOffset = 0.0;
 }
 
-- (void)fetchRSSFeed
-{
-    [self.books removeAllObjects]; // Clear old data
-    self.preloadedImages = [NSMutableArray array]; // Initialize the preloaded images array
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.currentBookIndex = 0; // Reset index
-        [self setNeedsDisplay:YES]; // Force re-rendering
-    });
-    
-    NSURL *url = [NSURL URLWithString:self.feedUrl];
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    [request setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"]; // Avoid cached responses
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (data) {
-            NSXMLParser *parser = [[NSXMLParser alloc] initWithData:data];
-            parser.delegate = self;
-            [parser parse];
-            
-            // Preload images after parsing
-            [self preloadImages];
-        }
-        if (error) {
-            NSLog(@"Error fetching RSS feed: %@", error.localizedDescription);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.displayShelfInfo = NO; // Hide shelf info even if there's an error
-                [self setNeedsDisplay:YES];
-            });
-        }
-    }];
-    [task resume];
-}
-
 #pragma mark - NSXMLParserDelegate
+
+- (void)parserDidStartDocument:(NSXMLParser *)parser
+{
+    // Initialize or reset parsing-related properties
+    self.inChannel = NO;
+    self.inItem = NO;
+    self.currentBook = nil;
+    self.currentElementValue = nil;
+}
 
 - (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName
   namespaceURI:(NSString *)namespaceURI
@@ -319,6 +360,12 @@
         [self.currentBook setObject:[self.currentElementValue copy] forKey:elementName];
     }
     self.currentElementValue = nil;
+}
+
+- (void)parserDidEndDocument:(NSXMLParser *)parser
+{
+    // Parsing completed
+    // No additional actions needed here
 }
 
 - (BOOL)hasConfigureSheet
