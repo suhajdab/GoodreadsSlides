@@ -3,4 +3,3 @@
 Known issues, todos:
 - need to add a configuration view to allow anyone to use their own shelf rss feed
 - transitions
-- shelf info display improvement

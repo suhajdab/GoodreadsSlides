@@ -73,19 +73,39 @@
     NSRectFill(rect);
     
     if (self.displayShelfInfo) {
-        // Display shelf title and number of books
-        NSString *shelfTitle = self.shelfTitle ?: @"";
-        NSString *infoText = [NSString stringWithFormat:@"%@\n%lu books", shelfTitle, (unsigned long)self.numberOfBooks];
+        NSString *infoText;
+        
+        if (self.numberOfBooks == 0) {
+            // Show this text before RSS pages are loaded
+            infoText = @"Fetching shelf details";
+        } else {
+            // Display shelf title and number of books in a single line at the bottom left
+            NSString *shelfTitle = self.shelfTitle ?: @"";
+            infoText = [NSString stringWithFormat:@"%@ | %lu books fetched", shelfTitle, (unsigned long)self.preloadedImages.count];
+        }
+        
+        NSFont *font = [NSFont fontWithName:@"Optima" size:24];
+        if (!font) {
+            // Fallback to system font
+            font = [NSFont systemFontOfSize:24];
+        }
+        
         NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-        paragraphStyle.alignment = NSTextAlignmentCenter;
+        paragraphStyle.alignment = NSTextAlignmentLeft; // Align text to the left
+        
         NSDictionary *attributes = @{
-            NSFontAttributeName: [NSFont systemFontOfSize:36],
+            NSFontAttributeName: font,
             NSForegroundColorAttributeName: [NSColor whiteColor],
             NSParagraphStyleAttributeName: paragraphStyle
         };
+        
         NSAttributedString *attributedText = [[NSAttributedString alloc] initWithString:infoText attributes:attributes];
         NSSize textSize = [attributedText size];
-        NSRect textRect = NSMakeRect((rect.size.width - textSize.width) / 2, (rect.size.height - textSize.height) / 2, textSize.width, textSize.height);
+        
+        // Position the text at the bottom left with some padding
+        CGFloat padding = 20.0; // Adjust padding as needed
+        NSRect textRect = NSMakeRect(padding, padding, textSize.width, textSize.height);
+        
         [attributedText drawInRect:textRect];
         return;
     }
@@ -220,6 +240,9 @@
                         @synchronized (self.preloadedImages) {
                             [self.preloadedImages addObject:@{@"image": image, @"book": book}];
                         }
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [self setNeedsDisplay:YES];
+                        });
                     }
                 } else {
                     NSLog(@"Failed to load image from URL: %@", imageURLString);
